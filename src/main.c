@@ -6,7 +6,7 @@
 /*   By: braugust <braugust@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/01/23 19:23:28 by braugust          #+#    #+#             */
-/*   Updated: 2025/01/24 03:45:23 by braugust         ###   ########.fr       */
+/*   Updated: 2025/02/03 09:32:27 by braugust         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -24,96 +24,75 @@ int ft_strncmp(const char *s1, const char *s2, size_t n)
         s2++;
         n--;
     }
-    return 0;
+    return (0);
 }
 
-void	free_tab(char **tab)
+void free_tab(char **tab)
 {
-	int	i;
-
-	i = 0;
-	while (tab[i])
-		free(tab[i++]);
-	free(tab);
-}
-char    *ft_strjoin_path(char *path, char *cmd)
-{
-    size_t  lenpath;
-    size_t  lencmd;
-    char    *tab;
-
-    lencmd = ft_strlen(cmd);
-    lenpath = ft_strlen(path);
-    
-    tab = malloc(lencmd + lenpath + 2);
-    if (!tab)
-        return (NULL);
-    ft_strcpy(tab, path);
-    tab[lenpath] = '/';
-    ft_strcpy(tab + lenpath + 1, cmd);
-    return (tab);
-}
-
-char    *find_cmd(char **paths, char *cmd)
-{
-    int     i;
-    char    *files;
-
-    i = 0;
-    while (paths[i])
-    {
-        files = ft_strjoin_path(paths[i], cmd);
-        if (!files)
-            return (NULL);
-        if (access(files, X_OK) == 0)
-            return (files);
-        free(files);
-        i++;
-    }
-    return (NULL);
+    int i = 0;
+    while (tab[i])
+        free(tab[i++]);
+    free(tab);
 }
 
 int main(int ac, char **av, char **env)
 {
-    int     i;
-    char    **tab;
-    char    *cmd;
-    char    *foundpath;
-    
-    i = -1;
-    tab = NULL;
-    cmd = av[1];
-    while (ac == 2)
+    int fd_in, fd_out;
+    int pipefd[2];
+    pid_t pid1, pid2;
+    t_pipe pipe_struct;
+
+    if (ac != 5)
     {
-        if (!env)
-            return (1);
-        while (*env)
-        {
-            if(ft_strncmp(*env, "PATH=", 5) == 0)
-            {
-                tab = ft_split(*env + 5, ':');
-                if (!tab)
-                    return (1);
-                break;
-            }
-            env++;
-        }
-        if (!tab)
-            return (1);
-        foundpath = find_cmd(tab, cmd);
-        if (foundpath)
-        {
-            printf("Cmd found: '%s' path : %s\n", cmd, foundpath);
-            free(foundpath);
-        }
-        else
-            printf("False\n");
-        while (tab[++i])
-        {
-            ft_putstr_fd(tab[i], 1);
-            write(1, "\n", 1);
-        }
-        return(free_tab(tab), 0);
+        fprintf(stderr, "Usage: %s infile cmd1 cmd2 outfile\n", av[0]);
+        exit(EXIT_FAILURE);
     }
-    return(0);
+    fd_in = open(av[1], O_RDONLY);
+    if (fd_in < 0)
+    {
+        perror("open infile");
+        exit(EXIT_FAILURE);
+    }
+    fd_out = open(av[4], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd_out < 0)
+    {
+        perror("open outfile");
+        close(fd_in);
+        exit(EXIT_FAILURE);
+    }
+    if (pipe(pipefd) < 0)
+    {
+        perror("pipe");
+        close(fd_in);
+        close(fd_out);
+        exit(EXIT_FAILURE);
+    }
+    pipe_struct.read = pipefd[0];
+    pipe_struct.write = pipefd[1];
+    pid1 = fork();
+    if (pid1 < 0)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+    if (pid1 == 0)
+        child_process1(av, env, fd_in, &pipe_struct);
+    
+    pid2 = fork();
+    if (pid2 < 0)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+    if (pid2 == 0)
+        child_process2(av, env, fd_out, &pipe_struct);
+    close(fd_in);
+    close(fd_out);
+    close(pipefd[0]);
+    close(pipefd[1]);
+    
+    while (wait(NULL) > 0)
+        ;
+    
+    return 0;
 }

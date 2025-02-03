@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "so_long.h": "c",
+        "mlx_int.h": "c",
+        "pipex.h": "c"
+    }
+}
