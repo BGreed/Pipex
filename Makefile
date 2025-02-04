@@ -5,7 +5,7 @@ NAME	= pipex
 SRC_PATH = src/
 OBJ_PATH = objs/
 
-SRC		= main.c process.c path.c
+SRC		= main.c process.c path.c files.c
 
 INCLUDES = ./includes
 LIB_DIR = ./libft

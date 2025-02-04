@@ -6,88 +6,119 @@
 /*   By: braugust <braugust@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/02/03 09:27:31 by braugust          #+#    #+#             */
-/*   Updated: 2025/02/03 09:35:25 by braugust         ###   ########.fr       */
+/*   Updated: 2025/02/04 06:03:46 by braugust         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "../includes/pipex.h"
 
-void    child_process1(char **av, char **env, int fd_in, t_pipe *pipe)
+void child_redirection(int pos, t_pipex_data *data)
 {
-    char    **cmd_args;
-    char    *cmd_path;
-
-    if (dup2(fd_in, STDIN_FILENO) < 0)
+    if (data->nb_cmd == 1)
     {
-        perror("dup2 infile");
-        exit(EXIT_FAILURE);
+        try_dup2(data->infile, 0);
+        try_dup2(data->outfile, 1);
     }
-    if (dup2(pipe->write, STDOUT_FILENO) < 0)
+    else if (pos == 0)
     {
-        perror("dup2 pipe write");
-        exit(EXIT_FAILURE);
+        try_dup2(data->infile, 0);
+        try_dup2(data->pipes[0].write, 1);
     }
-    close(fd_in);
-    close(pipe->write);
-    close(pipe->read);
-
-    cmd_args = ft_split(av[2], ' ');
-    if (!cmd_args)
+    else if (pos == data->nb_cmd - 1)
     {
-        fprintf(stderr, "Erreur ft_split pour la commande: %s\n", av[2]);
-        exit(EXIT_FAILURE);
+        try_dup2(data->pipes[pos - 1].read, 0);
+        try_dup2(data->outfile, 1);
     }
-    cmd_path = get_cmd_path(cmd_args[0], env);
-    if (!cmd_path)
+    else
     {
-        fprintf(stderr, "Commande introuvable: %s\n", av[2]);
-        free_tab(cmd_args);
-        exit(EXIT_FAILURE);
+        try_dup2(data->pipes[pos - 1].read, 0);
+        try_dup2(data->pipes[pos].write, 1);
     }
-    free(cmd_args[0]);
-    cmd_args[0] = cmd_path;
-    execve(cmd_path, cmd_args, env);
-    perror("execve cmd1");
-    free_tab(cmd_args);
-    exit(EXIT_FAILURE);
 }
 
-void    child_process2(char **av, char **env, int fd_out, t_pipe *pipe)
+void handle_child_error(char *msg, char **args, t_pipex_data *data)
 {
-    char    **cmd_args;
-    char    *cmd_path;
+    write(2, msg, ft_strlen(msg));
+    if (args)
+        free_tab(args);
+    if (data->pipes)
+        free(data->pipes);
+    exit(127);
+}
 
-    if (dup2(pipe->read, STDIN_FILENO) < 0)
-    {
-        perror("dup2 pipe read");
-        exit(EXIT_FAILURE);
-    }
-    if (dup2(fd_out, STDOUT_FILENO) < 0)
-    {
-        perror("dup2 outfile");
-        exit(EXIT_FAILURE);
-    }
-    close(fd_out);
-    close(pipe->read);
-    close(pipe->write);
+void child_execute(t_pipex_data *data, int pos, char **argv, char **env)
+{
+    char *cmd;
+    char **args;
 
-    cmd_args = ft_split(av[3], ' ');
-    if (!cmd_args)
+    if (data->here_doc)
+        cmd = argv[3 + pos];
+    else
+        cmd = argv[2 + pos];
+    if (!cmd || !cmd[0])
+        handle_child_error("Error: empty command\n", NULL, data);
+    args = ft_split(cmd, ' ');
+    if (!args || !args[0] || !ft_strlen(args[0]))
+        handle_child_error("Error: empty command\n", args, data);
     {
-        fprintf(stderr, "Erreur ft_split pour la commande: %s\n", av[3]);
-        exit(EXIT_FAILURE);
+        char *path = get_cmd_path(args[0], env);
+        if (!path)
+            handle_child_error("Command not found: ", args, data);
+        free(args[0]);
+        args[0] = path;
     }
-    cmd_path = get_cmd_path(cmd_args[0], env);
-    if (!cmd_path)
+    execve(args[0], args, env);
+    perror("execve");
+    free_tab(args);
+    if (data->pipes)
+        free(data->pipes);
+    exit(127);
+}
+
+pid_t launch_children(t_pipex_data *data, int here_doc, char **argv, char **env)
+{
+    int pos = -1;
+    pid_t pid;
+    pid_t last_pid = 0;
+
+    while (++pos < data->nb_cmd)
     {
-        fprintf(stderr, "Commande introuvable: %s\n", av[3]);
-        free_tab(cmd_args);
-        exit(EXIT_FAILURE);
+        pid = fork();
+        if (pid < 0)
+        {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+        if (pid == 0)
+        {
+            child_redirection(pos, data);
+            if (data->nb_cmd > 1)
+                close_all_pipes(data->nb_cmd, data->pipes);
+            if (!here_doc)
+                close(data->infile);
+            close(data->outfile);
+            child_execute(data, pos, argv, env);
+        }
+        last_pid = pid;
     }
-    free(cmd_args[0]);
-    cmd_args[0] = cmd_path;
-    execve(cmd_path, cmd_args, env);
-    perror("execve cmd2");
-    free_tab(cmd_args);
-    exit(EXIT_FAILURE);
+    return (last_pid);
+}
+
+void clean_parent(t_pipex_data *data)
+{
+    int j;
+
+    j = 0;
+    close(data->infile);
+    close(data->outfile);
+    if (data->nb_cmd > 1)
+    {
+        while (j < data->nb_cmd - 1)
+        {
+            close(data->pipes[j].read);
+            close(data->pipes[j].write);
+            j++;
+        }
+        free(data->pipes);
+    }
 }
